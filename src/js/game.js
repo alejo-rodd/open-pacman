@@ -172,25 +172,66 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
+  const target = ghostTarget( game, g );
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - target.x ) + Math.abs( ny - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+  g.dir = best;
+}
+
+// Celda objetivo del fantasma segun su personalidad.
+function ghostTarget( game, g ) {
+  const p = game.pacman;
+  const grid = game.grid;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const pers = game.ghosts.find( ( o ) => o.kind === 'perseguidor' );
+  const persX = pers ? Math.round( pers.x ) : px;
+  const persY = pers ? Math.round( pers.y ) : py;
+
+  if ( g.kind === 'perseguidor' ) {
+    return { x: px, y: py };
+  }
+
+  if ( g.kind === 'emboscador' ) {
+    let tx = px;
+    let ty = py;
+    const step = DIRS[ p.dir ];
+    if ( step ) {
+      for ( let i = 0; i < 4; i++ ) {
+        const nx = tx + step.x;
+        const ny = ty + step.y;
+        if ( isWall( grid, nx, ny, 'pacman' ) ) break;
+        tx = nx;
+        ty = ny;
       }
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+    return { x: tx, y: ty };
   }
+
+  if ( g.kind === 'flanqueador' ) {
+    if ( !pers || isInPen( pers ) ) {
+      return { x: 15, y: 11 };
+    }
+    return { x: 2 * px - persX, y: 2 * py - persY };
+  }
+
+  if ( g.kind === 'erratico' ) {
+    const distPersPac = Math.abs( persX - px ) + Math.abs( persY - py );
+    if ( distPersPac > 8 ) return { x: px, y: py };
+    return { x: 1, y: 29 };
+  }
+
+  return { x: px, y: py };
 }
 
 function moveGhost( game, g ) {
