@@ -81,6 +81,52 @@ function wrapTunnel( a, width ) {
   }
 }
 
+// El fantasma esta dentro de la pen (zona 13..15 x 11..16)?
+function isInPen( g ) {
+  return g.y >= 13 && g.y <= 15 && g.x >= 11 && g.x <= 16;
+}
+
+// IA intra-pen: hasta que llegue su releaseAt, quieto; despues, caminar a la
+// puerta (13,12) o (14,12). Evita celdas ocupadas por fantasmas no liberados.
+function decideGhostPen( game, g ) {
+  const now = performance.now();
+
+  if ( g.releaseAt > now ) {
+    g.dir = null;
+    return;
+  }
+
+  const grid = game.grid;
+  const doorX = g.x <= 13 ? 13 : 14;
+  const doorY = 12;
+
+  const options = Object.keys( DIRS ).filter(
+    ( dir ) => canMove( grid, g.x, g.y, dir, 'ghost' )
+  );
+
+  let best = null;
+  let bestDist = Infinity;
+  for ( const dir of options ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const blocked = game.ghosts.some( ( other ) =>
+      other !== g &&
+      Math.round( other.x ) === nx &&
+      Math.round( other.y ) === ny &&
+      other.releaseAt > now
+    );
+    if ( blocked ) continue;
+    const dist = Math.abs( nx - doorX ) + Math.abs( ny - doorY );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+
+  g.dir = best;
+}
+
 function movePacman( game ) {
   const p = game.pacman;
   const grid = game.grid;
@@ -114,6 +160,11 @@ function movePacman( game ) {
 function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+
+  if ( isInPen( g ) ) {
+    decideGhostPen( game, g );
+    return;
+  }
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
@@ -150,7 +201,7 @@ function moveGhost( game, g ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
     decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+    if ( !g.dir || !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
   }
 
   const d = DIRS[ g.dir ];
