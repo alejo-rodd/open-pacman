@@ -36,12 +36,13 @@ function createGame() {
       nextDir: null,
       speed: PACMAN_SPEED,
     },
-    ghosts: GHOST_STARTS.map( ( g ) => ( {
+    ghosts: GHOST_STARTS.map( ( g, i ) => ( {
       x: g.x,
       y: g.y,
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      releaseAt: performance.now() + i * 1500,
     } ) ),
   };
 }
@@ -80,6 +81,52 @@ function wrapTunnel( a, width ) {
   }
 }
 
+// El fantasma esta dentro de la pen (zona 13..15 x 11..16)?
+function isInPen( g ) {
+  return g.y >= 13 && g.y <= 15 && g.x >= 11 && g.x <= 16;
+}
+
+// IA intra-pen: hasta que llegue su releaseAt, quieto; despues, caminar a la
+// puerta (13,12) o (14,12). Evita celdas ocupadas por fantasmas no liberados.
+function decideGhostPen( game, g ) {
+  const now = performance.now();
+
+  if ( g.releaseAt > now ) {
+    g.dir = null;
+    return;
+  }
+
+  const grid = game.grid;
+  const doorX = g.x <= 13 ? 13 : 14;
+  const doorY = 12;
+
+  const options = Object.keys( DIRS ).filter(
+    ( dir ) => canMove( grid, g.x, g.y, dir, 'ghost' )
+  );
+
+  let best = null;
+  let bestDist = Infinity;
+  for ( const dir of options ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const blocked = game.ghosts.some( ( other ) =>
+      other !== g &&
+      Math.round( other.x ) === nx &&
+      Math.round( other.y ) === ny &&
+      other.releaseAt > now
+    );
+    if ( blocked ) continue;
+    const dist = Math.abs( nx - doorX ) + Math.abs( ny - doorY );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+
+  g.dir = best;
+}
+
 function movePacman( game ) {
   const p = game.pacman;
   const grid = game.grid;
@@ -114,31 +161,77 @@ function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
 
+  if ( isInPen( g ) ) {
+    decideGhostPen( game, g );
+    return;
+  }
+
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
   );
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
+  const target = ghostTarget( game, g );
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - target.x ) + Math.abs( ny - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+  g.dir = best;
+}
+
+// Celda objetivo del fantasma segun su personalidad.
+function ghostTarget( game, g ) {
+  const p = game.pacman;
+  const grid = game.grid;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const pers = game.ghosts.find( ( o ) => o.kind === 'perseguidor' );
+  const persX = pers ? Math.round( pers.x ) : px;
+  const persY = pers ? Math.round( pers.y ) : py;
+
+  if ( g.kind === 'perseguidor' ) {
+    return { x: px, y: py };
+  }
+
+  if ( g.kind === 'emboscador' ) {
+    let tx = px;
+    let ty = py;
+    const step = DIRS[ p.dir ];
+    if ( step ) {
+      for ( let i = 0; i < 4; i++ ) {
+        const nx = tx + step.x;
+        const ny = ty + step.y;
+        if ( isWall( grid, nx, ny, 'pacman' ) ) break;
+        tx = nx;
+        ty = ny;
       }
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+    return { x: tx, y: ty };
   }
+
+  if ( g.kind === 'flanqueador' ) {
+    if ( !pers || isInPen( pers ) ) {
+      return { x: 15, y: 11 };
+    }
+    return { x: 2 * px - persX, y: 2 * py - persY };
+  }
+
+  if ( g.kind === 'erratico' ) {
+    const distPersPac = Math.abs( persX - px ) + Math.abs( persY - py );
+    if ( distPersPac > 8 ) return { x: px, y: py };
+    return { x: 1, y: 29 };
+  }
+
+  return { x: px, y: py };
 }
 
 function moveGhost( game, g ) {
@@ -149,7 +242,7 @@ function moveGhost( game, g ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
     decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+    if ( !g.dir || !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
   }
 
   const d = DIRS[ g.dir ];
@@ -168,6 +261,7 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.releaseAt = performance.now() + i * 1500;
   } );
 }
 
